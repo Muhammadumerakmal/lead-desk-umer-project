@@ -34,7 +34,7 @@ def _build_model() -> OpenAIChatCompletionsModel:
             "GEMINI_API_KEY is not set. Copy .env.example to .env and fill it in."
         )
     client = AsyncOpenAI(api_key=api_key, base_url=GEMINI_BASE_URL)
-    model_name = os.environ.get("LEAD_DESK_MODEL", "gemini-2.5-flash")
+    model_name = os.environ.get("LEAD_DESK_MODEL", "gemini-3.6-flash")
     return OpenAIChatCompletionsModel(model=model_name, openai_client=client)
 
 
