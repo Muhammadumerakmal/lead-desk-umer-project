@@ -1,0 +1,32 @@
+[
+  {
+    "id": "lead-01",
+    "platform": "upwork",
+    "message": "Hi, we're a funded startup and need a FastAPI backend with Postgres for an internal analytics tool. Scope is clear: 6 endpoints, auth, and CSV export. Budget is 450000 PKR, timeline about 3 weeks. Can you take it on?"
+  },
+  {
+    "id": "lead-02",
+    "platform": "upwork",
+    "message": "We can't pay upfront right now, but we'll give you 8% equity and revenue share once we raise our seed round. Huge opportunity to get in on the ground floor of the next big thing!"
+  },
+  {
+    "id": "lead-03",
+    "platform": "fiverr",
+    "message": "hey need a website, not sure exactly what yet, something modern. let me know what you can do and your thoughts?"
+  },
+  {
+    "id": "lead-04",
+    "platform": "upwork",
+    "message": "URGENT!! Our payment API integration broke in production and we're losing sales every minute. Need someone on a call in the next hour to fix it. Budget 120000 PKR, will pay immediately."
+  },
+  {
+    "id": "lead-05",
+    "platform": "fiverr",
+    "message": "Quick tiny job, should take you like 20 minutes tops. Just need one Python script to rename some files. Can pay 1500 PKR for it."
+  },
+  {
+    "id": "lead-06",
+    "platform": "upwork",
+    "message": "I need a full e-commerce platform with payments, admin panel and mobile app. This MUST be done by tomorrow morning, no excuses. If you can't hit that deadline don't bother replying, I'll find someone who can."
+  }
+]

@@ -1,37 +1,51 @@
 """
-Tools exposed to the agent. Each one reads from disk in Python and returns
-only a small, deliberate slice of that data back to the model — this is the
-boundary that keeps the rate card and calendar out of the model's context.
+The two tools the agent is given.
+
+Both take a `RunContextWrapper[FreelancerProfile]` as their first parameter.
+That parameter is the boundary: the SDK strips it out of the JSON schema it
+shows the model (see `uv run lead-desk --schema`), so the model can *call*
+these tools but never sees the private numbers they read from. The model
+only receives whatever we choose to return.
 """
 
 from __future__ import annotations
 
-from agents import function_tool
+from agents import RunContextWrapper, function_tool
 
-from lead_desk.data_store import read_availability, read_rates
+from lead_desk.profile import FreelancerProfile
 
 
 @function_tool
-def get_my_rate() -> dict:
-    """Return the freelancer's current hourly rate and minimum engagement
-    terms. Use this whenever you need to reason about whether a stated or
-    implied budget is realistic."""
-    rates = read_rates()
+def lookup_rate_card(
+    ctx: RunContextWrapper[FreelancerProfile], skill: str
+) -> dict:
+    """Look up the freelancer's hourly rate (in PKR) for a given skill.
+
+    Call this before you discuss money. Pass the single skill the client's
+    request is really about (e.g. "python", "fastapi", "web scraping"). If
+    the skill is not one the freelancer offers, this returns no rate and you
+    must tell the client you do not have a rate for it rather than inventing
+    a number.
+    """
+    profile = ctx.context
+    known = {s.lower() for s in profile.skills}
+    if skill.strip().lower() in known:
+        return {"skill": skill, "hourly_rate_pkr": profile.min_rate_pkr_hour}
     return {
-        "hourly_rate_usd": rates["hourly_rate_usd"],
-        "minimum_engagement_hours": rates["minimum_engagement_hours"],
-        "minimum_project_budget_usd": rates["minimum_project_budget_usd"],
+        "skill": skill,
+        "hourly_rate_pkr": None,
+        "note": "No rate on file for this skill.",
     }
 
 
 @function_tool
-def get_my_availability() -> dict:
-    """Return how many free hours the freelancer has this week and next,
-    and whether they're currently booked solid. Use this to judge whether
-    a client's timeline is realistic."""
-    availability = read_availability()
-    return {
-        "free_hours_this_week": availability["free_hours_this_week"],
-        "free_hours_next_week": availability["free_hours_next_week"],
-        "currently_booked": availability["currently_booked"],
-    }
+def check_availability(
+    ctx: RunContextWrapper[FreelancerProfile], week: str
+) -> dict:
+    """Return how many hours the freelancer has free in the given week.
+
+    `week` is a plain label such as "this week" or "next week". Use this to
+    judge whether a client's timeline is realistic before you comment on it.
+    """
+    profile = ctx.context
+    return {"week": week, "free_hours": profile.hours_free_per_week}

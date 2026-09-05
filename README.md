@@ -1,8 +1,8 @@
 # Lead Desk
 
 Takes one raw freelance client message and turns it into a typed, actionable
-verdict: what they want, what they'll pay, whether it's worth your time —
-without you having to read the whole thing first.
+verdict — intent, budget, red flags, priority, and a suggested reply — so you
+can act fast without reading the whole thing first.
 
 ## How it fits together
 
@@ -10,75 +10,64 @@ without you having to read the whole thing first.
 message
    │
    ▼
-guardrail.py  ── misrepresentation request? ──► refuse, 0 API calls, stop here
+guardrail.py  ── input guardrail: misrepresentation request?
+   │              ──► trips tripwire, 0 API calls, CLI declines cleanly
    │ no
    ▼
-agent.py      ── Gemini agent, calls get_my_rate() / get_my_availability()
-   │              tools, returns a typed LeadVerdict (never a paragraph)
+agent.py      ── Gemini agent (gemini-3.6-flash; spec's 2.5-flash is 404'd by
+   │              Google now). Calls lookup_rate_card(skill)
+   │              and check_availability(week), returns a typed LeadTriage.
    ▼
-decision.py   ── plain Python: compares verdict to rate card + availability,
-   │              decides worth_pursuing — the model never sets this itself
+decision.py   ── plain Python: should_save() reads triage.priority
+   │              (save only when priority == "high")
    ▼
-data_store.py ── only if worth_pursuing: append to data/leads.json
+data_store.py ── if high: print banner, append to saved.json
 ```
 
-- **`lead_desk/models.py`** — `LeadVerdict` (what the model returns) and
-  `LeadDecision` (what Python computes afterwards). Kept separate on
-  purpose: the model classifies, Python decides.
-- **`lead_desk/tools.py`** — `get_my_rate` / `get_my_availability`. These
-  are the *only* way the agent learns your rate or your calendar; the raw
-  JSON files are never in its prompt.
-- **`lead_desk/guardrail.py`** — a plain regex check for "pretend you have
-  X years experience" / "don't mention you're new" style requests. Runs
-  before the agent is ever invoked, so a matching message never reaches
-  the API.
-- **`lead_desk/decision.py`** — the actual "is this worth my time" logic.
-  Reads the rate card and availability itself (independent of whatever the
-  model said) and applies rules to `worth_pursuing`.
-- **`data/rates.json`**, **`data/availability.json`** — stand in for
-  wherever this data would really live (a database, a calendar API). Edit
-  these to change your rate or free time.
-- **`data/leads.json`** — created on first save; append-only log of leads
-  that cleared the bar.
+### Where the private data lives
+
+The freelancer's numbers (minimum rate in PKR, skills, free hours) live in
+**`lead_desk/profile.py`** as a `FreelancerProfile`, handed to the run *as
+context*. The tools read from that context; the model only ever sees what a
+tool returns. The minimum rate is in no instruction and no message — prove it
+with `grep -r min_rate_pkr_hour lead_desk` (only profile.py matches), and see
+the model-visible tool schema (no `ctx` param) with `uv run lead-desk --schema`.
+
+### Files
+
+- **`lead_desk/profile.py`** — `FreelancerProfile` (private context).
+- **`lead_desk/tools.py`** — `lookup_rate_card` / `check_availability`, both
+  read from run context.
+- **`lead_desk/models.py`** — `LeadTriage`, the one typed output shape.
+- **`lead_desk/agent.py`** — the agent, its tools, and the input guardrail.
+- **`lead_desk/guardrail.py`** — zero-cost regex input guardrail.
+- **`lead_desk/decision.py`** — `should_save()`: the save decision, in Python.
+- **`lead_desk/data_store.py`** — reads `leads.json`, appends `saved.json`.
+- **`leads.json`** — six sample client messages (input fixtures).
+- **`saved.json`** — high-priority leads that cleared the bar (output).
 
 ## Setup
 
 ```bash
 uv venv
-source .venv/bin/activate      # or `.venv\Scripts\activate` on Windows
-uv pip install -e .
+uv sync
 cp .env.example .env           # then paste in your GEMINI_API_KEY
 ```
 
 ## Run it
 
 ```bash
-uv run lead-desk "We need a FastAPI backend, 3-4 weeks, budget around $4,000. Can you start next week?"
+uv run lead-desk                       # one hardcoded message
+uv run lead-desk "your message here"   # triage a specific message
+uv run lead-desk --all                 # triage all six fixtures in leads.json
+uv run lead-desk --schema              # print a tool's JSON schema (evidence)
 ```
-
-or pipe a message in:
-
-```bash
-echo "quick job should take an hour, no budget mentioned" | uv run lead-desk
-```
-
-Output is JSON on stdout — either a refusal object (guardrail fired) or a
-full `LeadDecision`.
 
 ## Test the parts that don't need an API key
 
 ```bash
-uv run pytest tests/test_guardrail.py -v
+uv run python -m pytest tests/test_guardrail.py -v   # (pytest optional)
 ```
 
-`tests/sample_messages.py` has a few hand-written messages (a real lead, a
-vague no-budget one, a revenue-share pitch, a lowball-with-pressure one,
-and a misrepresentation request) to run through the CLI by hand and sanity
-check each branch.
-
-## Adjusting the rules
-
-`decision.py`'s thresholds (minimum budget, what counts as "too many soft
-red flags", how availability is checked) are plain Python — read them,
-they're short — and are the first thing worth changing if your own bar for
-"worth pursuing" differs from what's encoded here.
+The guardrail tests make no network calls and need no API key — proving the
+refusal path really is free.

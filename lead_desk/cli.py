@@ -1,155 +1,140 @@
 """
-Entry point. Usage:
+Entry point. Everything runs through the asynchronous runner.
 
-    uv run lead-desk "the raw client message goes here"
+Usage:
+    uv run lead-desk                     # triage one hardcoded message
+    uv run lead-desk "client message"    # triage the message you pass
+    uv run lead-desk --all               # triage all six fixtures in leads.json
+    uv run lead-desk --schema            # print a tool's JSON schema (evidence)
 
-or, without an argument, it reads the message from stdin so you can pipe
-messages in one at a time.
-
-Pipeline:
-    1. guardrail check (zero API calls) — refuse and stop if it fires
-    2. agent call -> LeadVerdict (typed, not prose)
-    3. decision.evaluate() -> LeadDecision (pure Python)
-    4. save to data/leads.json only if worth_pursuing is True
+Pipeline per message:
+    1. input guardrail (zero API calls) — refuse and stop if it trips
+    2. agent run -> LeadTriage (typed, not prose)
+    3. Python decides: save only when priority == "high"
+    4. one-line banner, then append to saved.json
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 
-from agents import Runner
+from agents import InputGuardrailTripwireTriggered, Runner
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich.text import Text
 
 from lead_desk.agent import build_agent
-from lead_desk.data_store import append_lead
-from lead_desk.decision import evaluate
-from lead_desk.guardrail import find_misrepresentation_request
+from lead_desk.data_store import read_leads, save_lead
+from lead_desk.decision import should_save
+from lead_desk.guardrail import REFUSAL_REASON
+from lead_desk.models import LeadTriage
+from lead_desk.profile import build_profile
+from lead_desk.tools import lookup_rate_card
 
 console = Console()
 
-
-def _get_message() -> str:
-    if len(sys.argv) > 1:
-        return " ".join(sys.argv[1:])
-    message = sys.stdin.read().strip()
-    if not message:
-        console.print(
-            '[red]Usage:[/red] lead-desk "[bold]<client message>[/bold]"  '
-            "(or pipe a message via stdin)"
-        )
-        sys.exit(1)
-    return message
+# Task 0: the one hardcoded message used when no argument is given.
+HARDCODED_MESSAGE = (
+    "Hi! We need a FastAPI backend for an internal dashboard, about 3 weeks "
+    "of work. Budget is around 400000 PKR. Can you start next week?"
+)
 
 
-def _print_refusal(reason: str) -> None:
-    console.print()
+def _print_schema() -> None:
+    """Task 2 evidence: the model-visible schema of a tool. The private
+    context parameter does not appear here — only `skill` does."""
+    schema = lookup_rate_card.params_json_schema
     console.print(
         Panel(
-            f"[bold red]REFUSED[/bold red]\n\n{reason}",
-            title="[red]Guardrail Triggered[/red]",
-            border_style="red",
+            json.dumps(schema, indent=2),
+            title="lookup_rate_card — JSON schema shown to the model",
+            border_style="magenta",
         )
     )
-    console.print()
-
-
-def _print_decision(verdict, decision, message: str) -> None:
-    console.print()
-
-    # Header
-    status = (
-        "[bold green]WORTH PURSUING[/bold green]"
-        if decision.worth_pursuing
-        else "[bold yellow]NOT WORTH PURSUING[/bold yellow]"
+    console.print(
+        "[dim]Note: no `ctx` / context parameter appears — the SDK strips it, "
+        "so the private profile never reaches the model.[/dim]"
     )
-    console.print(Panel(status, title="Lead Desk Verdict", border_style="blue"))
 
-    # Verdict table
-    verdict_table = Table(
-        title="AI Analysis", show_header=False, border_style="cyan", padding=(0, 2)
-    )
-    verdict_table.add_column("Field", style="bold")
-    verdict_table.add_column("Value")
 
-    verdict_table.add_row("Intent", verdict.intent)
-    verdict_table.add_row("Summary", verdict.one_line_summary)
-    verdict_table.add_row(
+def _print_triage(triage: LeadTriage) -> None:
+    table = Table(show_header=False, border_style="cyan", padding=(0, 2))
+    table.add_column("Field", style="bold")
+    table.add_column("Value")
+    table.add_row("Intent", triage.intent)
+    table.add_row(
         "Budget",
-        f"${verdict.stated_budget_usd:,.0f}"
-        if verdict.stated_budget_usd
-        else "[dim]Not stated[/dim]",
+        f"{triage.budget_pkr:,} PKR" if triage.budget_pkr is not None
+        else "[dim]not stated[/dim]",
     )
-    verdict_table.add_row("Est. Hours", f"{verdict.estimated_hours:.0f}h")
-    verdict_table.add_row("Confidence", f"{verdict.confidence:.0%}")
+    priority_colour = {"high": "green", "medium": "yellow", "low": "red"}[
+        triage.priority
+    ]
+    table.add_row("Priority", f"[{priority_colour}]{triage.priority}[/{priority_colour}]")
+    table.add_row(
+        "Red Flags",
+        "[red]" + "; ".join(triage.red_flags) + "[/red]" if triage.red_flags
+        else "[green]none[/green]",
+    )
+    table.add_row("Suggested Reply", triage.suggested_reply)
+    console.print(table)
 
-    flags = verdict.red_flags
-    if flags:
-        verdict_table.add_row(
-            "Red Flags", "[red]" + ", ".join(flags) + "[/red]"
+
+async def triage_one(message: str) -> None:
+    """Run one message through guardrail -> agent -> save decision."""
+    profile = build_profile()
+    agent = build_agent()
+
+    try:
+        result = await Runner.run(agent, message, context=profile)
+    except InputGuardrailTripwireTriggered:
+        # No model call was made. Decline politely and return cleanly.
+        console.print(Panel(REFUSAL_REASON, title="[red]Refused[/red]",
+                            border_style="red"))
+        return
+
+    triage: LeadTriage = result.final_output
+    _print_triage(triage)
+
+    # The save decision is Python's, reading the typed priority field.
+    if should_save(triage):
+        budget = triage.budget_pkr if triage.budget_pkr is not None else "n/a"
+        # One-line banner showing priority and budget before saving.
+        console.print(
+            f"[bold green][SAVE][/bold green] priority={triage.priority} "
+            f"budget_pkr={budget}"
         )
-    else:
-        verdict_table.add_row("Red Flags", "[green]None[/green]")
-
-    console.print(verdict_table)
-
-    # Decision table
-    decision_table = Table(
-        title="Decision", show_header=False, border_style="green", padding=(0, 2)
-    )
-    decision_table.add_column("Field", style="bold")
-    decision_table.add_column("Value")
-
-    decision_table.add_row("Hourly Rate", f"${decision.hourly_rate_usd:.0f}/hr")
-    decision_table.add_row("Free Hours", f"{decision.free_hours_this_week:.0f}h")
-    decision_table.add_row("Reason", decision.reason)
-
-    if decision.saved:
-        decision_table.add_row("Saved", "[green]Yes -> data/leads.json[/green]")
-
-    console.print(decision_table)
-    console.print()
-
-
-def run(message: str) -> dict:
-    refusal_reason = find_misrepresentation_request(message)
-    if refusal_reason:
-        _print_refusal(refusal_reason)
-        return {
-            "refused": True,
-            "reason": refusal_reason,
-            "api_calls_made": 0,
-        }
-
-    with console.status("[bold cyan]Analyzing message...[/bold cyan]", spinner="dots"):
-        agent = build_agent()
-        run_result = Runner.run_sync(agent, message)
-        verdict = run_result.final_output
-
-    decision = evaluate(verdict)
-
-    if decision.worth_pursuing:
-        record = decision.model_dump(mode="json")
+        record = triage.model_dump()
         record["original_message"] = message
-        append_lead(record)
-        decision.saved = True
+        save_lead(record)
+    else:
+        console.print(
+            f"[dim][SKIP] priority={triage.priority} — not saved.[/dim]"
+        )
 
-    _print_decision(verdict, decision, message)
 
-    return {
-        "refused": False,
-        "decision": decision.model_dump(mode="json"),
-    }
+async def _amain(argv: list[str]) -> None:
+    if argv and argv[0] == "--schema":
+        _print_schema()
+        return
+
+    if argv and argv[0] == "--all":
+        for lead in read_leads():
+            console.rule(f"[bold]{lead['id']}[/bold] · {lead['platform']}")
+            console.print(f"[dim]{lead['message']}[/dim]")
+            await triage_one(lead["message"])
+        return
+
+    message = " ".join(argv) if argv else HARDCODED_MESSAGE
+    console.rule("[bold]Lead Desk[/bold]")
+    console.print(f"[dim]{message}[/dim]")
+    await triage_one(message)
 
 
 def main() -> None:
-    message = _get_message()
-    output = run(message)
-    # Also dump raw JSON to stdout for piping
-    print(json.dumps(output, indent=2))
+    asyncio.run(_amain(sys.argv[1:]))
 
 
 if __name__ == "__main__":

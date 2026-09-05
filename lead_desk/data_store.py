@@ -1,10 +1,12 @@
 """
-Everything the language model is *not* allowed to see directly.
+File I/O, kept in one place.
 
-The agent never receives rates.json or availability.json in its prompt or
-context. It only ever learns these numbers by calling a tool, and only
-receives back whatever that tool's return value says — the same boundary
-you'd want if this data lived in a real database instead of a JSON file.
+- leads.json  : the six sample client messages (input fixtures).
+- saved.json  : where a high-priority triage is appended (output).
+
+Both live at the project root, as the spec names them. The freelancer's
+private numbers do NOT live here — those are in profile.py and only ever
+reach the model through a tool return.
 """
 
 from __future__ import annotations
@@ -12,26 +14,23 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
-RATES_FILE = DATA_DIR / "rates.json"
-AVAILABILITY_FILE = DATA_DIR / "availability.json"
-LEADS_FILE = DATA_DIR / "leads.json"
+ROOT = Path(__file__).resolve().parent.parent
+LEADS_FILE = ROOT / "leads.json"
+SAVED_FILE = ROOT / "saved.json"
 
 
-def read_rates() -> dict:
-    return json.loads(RATES_FILE.read_text())
+def read_leads() -> list[dict]:
+    """The six sample messages to run the agent against."""
+    return json.loads(LEADS_FILE.read_text(encoding="utf-8"))
 
 
-def read_availability() -> dict:
-    return json.loads(AVAILABILITY_FILE.read_text())
-
-
-def append_lead(record: dict) -> None:
-    leads = []
-    if LEADS_FILE.exists():
+def save_lead(record: dict) -> None:
+    """Append one triage record to saved.json, creating the file if needed."""
+    saved: list[dict] = []
+    if SAVED_FILE.exists():
         try:
-            leads = json.loads(LEADS_FILE.read_text())
+            saved = json.loads(SAVED_FILE.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
-            leads = []
-    leads.append(record)
-    LEADS_FILE.write_text(json.dumps(leads, indent=2))
+            saved = []
+    saved.append(record)
+    SAVED_FILE.write_text(json.dumps(saved, indent=2), encoding="utf-8")
