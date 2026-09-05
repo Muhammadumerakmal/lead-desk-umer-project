@@ -49,3 +49,31 @@ def check_availability(
     """
     profile = ctx.context
     return {"week": week, "free_hours": profile.hours_free_per_week}
+
+
+def _profile_is_verified(
+    ctx: RunContextWrapper[FreelancerProfile], agent
+) -> bool:
+    """Gate for send_proposal. The SDK calls this while resolving the tool
+    list; if it returns False the tool is never sent to the model at all."""
+    return bool(ctx.context.verified)
+
+
+@function_tool(is_enabled=_profile_is_verified)
+def send_proposal(
+    ctx: RunContextWrapper[FreelancerProfile],
+    client_message: str,
+    proposed_rate_pkr: int,
+) -> dict:
+    """Send a formal proposal to the client at the given hourly rate (PKR).
+
+    Only available to verified freelancers. Use this once you are confident
+    the lead is worth pursuing and you have a rate to quote.
+    """
+    profile = ctx.context
+    return {
+        "sent": True,
+        "from": profile.name,
+        "proposed_rate_pkr": proposed_rate_pkr,
+        "re": client_message[:60],
+    }

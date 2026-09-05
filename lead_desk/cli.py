@@ -6,6 +6,7 @@ Usage:
     uv run lead-desk "client message"    # triage the message you pass
     uv run lead-desk --all               # triage all six fixtures in leads.json
     uv run lead-desk --schema            # print a tool's JSON schema (evidence)
+    uv run lead-desk --conditional-tools # Task 5B: send_proposal only when verified
 
 Pipeline per message:
     1. input guardrail (zero API calls) — refuse and stop if it trips
@@ -20,7 +21,7 @@ import asyncio
 import json
 import sys
 
-from agents import InputGuardrailTripwireTriggered, Runner
+from agents import InputGuardrailTripwireTriggered, RunContextWrapper, Runner
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -82,6 +83,30 @@ def _print_triage(triage: LeadTriage) -> None:
     console.print(table)
 
 
+async def _demo_conditional_tools() -> None:
+    """Task 5B evidence: show that send_proposal is offered to the model only
+    when the profile is verified. `get_all_tools` resolves each tool's
+    is_enabled gate exactly as the runner does before a turn."""
+    agent = build_agent()
+    for verified in (False, True):
+        profile = build_profile()
+        profile.verified = verified
+        ctx = RunContextWrapper(context=profile)
+        tools = await agent.get_all_tools(ctx)
+        names = [t.name for t in tools]
+        offered = "send_proposal" in names
+        colour = "green" if offered else "red"
+        console.print(
+            Panel(
+                f"verified = [bold]{verified}[/bold]\n"
+                f"tools offered to the model: {names}\n"
+                f"send_proposal offered? [{colour}]{offered}[/{colour}]",
+                title=f"Conditional tools — verified={verified}",
+                border_style=colour,
+            )
+        )
+
+
 async def triage_one(message: str) -> None:
     """Run one message through guardrail -> agent -> save decision."""
     profile = build_profile()
@@ -118,6 +143,10 @@ async def triage_one(message: str) -> None:
 async def _amain(argv: list[str]) -> None:
     if argv and argv[0] == "--schema":
         _print_schema()
+        return
+
+    if argv and argv[0] == "--conditional-tools":
+        await _demo_conditional_tools()
         return
 
     if argv and argv[0] == "--all":

@@ -18,7 +18,7 @@ from openai import AsyncOpenAI
 from lead_desk.guardrail import misrepresentation_guardrail
 from lead_desk.models import LeadTriage
 from lead_desk.profile import FreelancerProfile
-from lead_desk.tools import check_availability, lookup_rate_card
+from lead_desk.tools import check_availability, lookup_rate_card, send_proposal
 
 load_dotenv()
 
@@ -80,7 +80,9 @@ def build_agent() -> Agent[FreelancerProfile]:
         name="Lead Desk",
         instructions=INSTRUCTIONS,
         model=_build_model(),
-        tools=[lookup_rate_card, check_availability],
+        # send_proposal is listed here always, but its is_enabled gate means
+        # the SDK only offers it to the model when profile.verified is True.
+        tools=[lookup_rate_card, check_availability, send_proposal],
         input_guardrails=[misrepresentation_guardrail],
         output_type=LeadTriage,
     )

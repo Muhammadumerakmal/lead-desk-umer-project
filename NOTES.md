@@ -19,4 +19,7 @@ One line per task: what came back wrong the first time, and what I changed.
 - **Task 4** — The refusal was a manual pre-check function, not an SDK guardrail; wrapped
   it as an `@input_guardrail` that trips the tripwire with no model call, and caught
   `InputGuardrailTripwireTriggered` in the CLI so it declines instead of crashing.
-- **Task 5** — Bonus not attempted; focused on making Tasks 0–4 correct and defensible.
+- **Task 5** — Chose B (conditional tools). First tried filtering the tools list by
+  hand at build time; switched to the SDK's `is_enabled` gate on `send_proposal` so
+  `get_all_tools` resolves it per-run, and proved via `--conditional-tools` that an
+  unverified profile is never offered the tool while a verified one is.

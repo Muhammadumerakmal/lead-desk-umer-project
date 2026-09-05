@@ -61,7 +61,12 @@ uv run lead-desk                       # one hardcoded message
 uv run lead-desk "your message here"   # triage a specific message
 uv run lead-desk --all                 # triage all six fixtures in leads.json
 uv run lead-desk --schema              # print a tool's JSON schema (evidence)
+uv run lead-desk --conditional-tools   # Task 5B: send_proposal only when verified
 ```
+
+**Task 5 (bonus, Option B):** `send_proposal` is gated by an `is_enabled` check on
+`profile.verified`. When unverified, the SDK never offers the tool to the model;
+`--conditional-tools` prints the resolved tool list for both cases to prove it.
 
 ## Test the parts that don't need an API key
 
