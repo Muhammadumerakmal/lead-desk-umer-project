@@ -1,63 +1,83 @@
 # Prompts used to build Lead Desk
 
-In an actual timed exam, this file is meant to hold every prompt you
-personally sent to Claude Code, in order, verbatim. Below is the design
-sequence this reference implementation was actually built from — treat it
-as an example of the *level of specificity* worth aiming for, not
-something to copy-paste into your own submission (the paper explicitly
-disqualifies a finished project from any outside source).
+> **Read this first.** In the timed exam, this file must hold every prompt
+> *you personally* sent to Claude Code, in order, grouped by task, verbatim.
+> It is assessed, and a log reconstructed from memory reads as exactly that.
+> What follows is a **reference design sequence** at the level of specificity
+> worth aiming for — an example of *how* to prompt, not something to submit as
+> your own. The paper disqualifies a finished project from any outside source,
+> so record your real prompts as you go and replace this text with them.
 
-1. "Set up a uv project called lead-desk, Python 3.13, deps on
-   openai-agents, pydantic, python-dotenv. Add a .env.example for
-   GEMINI_API_KEY."
+---
 
-2. "Define two pydantic models in models.py: LeadVerdict, with intent
-   (enum: new_project/quick_task/consultation/ongoing_role/vague/spam),
-   one_line_summary, stated_budget_usd (nullable), estimated_hours
-   (nullable), red_flags (list of enum), confidence (0-1). And
-   LeadDecision, which wraps a LeadVerdict plus hourly_rate_usd,
-   free_hours_this_week, worth_pursuing, reason, saved — this one gets
-   built by our own code, not the model."
+## Task 0 — Project and connection
 
-3. "Create data/rates.json and data/availability.json as the source of
-   truth for my rate and free hours. Then in tools.py write two
-   @function_tool-decorated functions, get_my_rate and get_my_availability,
-   that read those files and return a small dict. The agent should never
-   see the raw JSON in its prompt — only what these tools return."
+- "Set up a uv project called lead-desk, Python 3.13+, deps on openai-agents,
+  pydantic, python-dotenv, rich. Add .env.example for GEMINI_API_KEY and
+  git-ignore .env."
+- "Wire agent.py to Gemini via its OpenAI-compatible endpoint
+  (https://generativelanguage.googleapis.com/v1beta/openai/) using AsyncOpenAI
+  + OpenAIChatCompletionsModel — not a bare model string. Read the model name
+  from an env var. Disable tracing since we're not on OpenAI."
+- "Make the entry point asynchronous: an async main run via asyncio.run that
+  calls Runner.run (not run_sync) on one hardcoded client message and prints
+  the result."
 
-4. "In guardrail.py write a pure-Python (no LLM call) check that catches
-   messages asking me to misrepresent my experience — things like
-   'pretend you have 10 years experience', 'don't mention you're new',
-   'fake a portfolio'. It needs to run before the agent is invoked at all,
-   so a matching message costs zero API calls. Regex is fine."
+## Task 1 — Sample data and lookup tools
 
-5. "Wire up agent.py: Gemini via its OpenAI-compatible endpoint
-   (https://generativelanguage.googleapis.com/v1beta/openai/), using
-   AsyncOpenAI + OpenAIChatCompletionsModel from the Agents SDK, not a
-   bare model string. Disable tracing since we're not using OpenAI.
-   output_type=LeadVerdict, tools=[get_my_rate, get_my_availability].
-   Write instructions that tell it to classify only — no drafting replies,
-   no deciding whether to pursue."
+- "Create leads.json with six sample client messages, each with id, message,
+  platform. Cover: well-budgeted, revenue-share-instead-of-pay, too-vague,
+  urgent, very-small-job, aggressive-about-deadlines."
+- "In tools.py add two @function_tool functions: lookup_rate_card(skill) that
+  returns my hourly rate for that skill, and check_availability(week) that
+  returns free hours that week. If a skill isn't one I offer, return no rate
+  so the model has to say it doesn't know rather than invent a number. Write
+  the docstrings for the model to pick the right tool."
 
-6. "Write decision.py: given a LeadVerdict, read the rate card and
-   availability directly (don't trust the model's arithmetic), and decide
-   worth_pursuing with explicit rules — budget below minimum, a
-   disqualifying red flag, no free hours, or too many soft red flags at
-   once should all be able to sink a lead on their own. Return a
-   human-readable reason string alongside the bool."
+## Task 2 — Data the model is never given
 
-7. "cli.py: take the message from argv or stdin, run the guardrail first
-   and short-circuit on a hit, otherwise run the agent, evaluate the
-   decision, and only append to leads.json if worth_pursuing is true.
-   Print the result as JSON."
+- "Define a FreelancerProfile (pydantic) with name, min_rate_pkr_hour, skills,
+  hours_free_per_week, verified. Build it in code and pass it to the run as
+  context. Change both tools to read from ctx.context instead of module-level
+  data, so the minimum rate never appears in the prompt or any message."
+- "Add a --schema command that prints lookup_rate_card's JSON schema so I can
+  show the ctx parameter isn't in it. Explain why the SDK strips it."
 
-8. "Add a few sample messages covering a real lead, a vague no-budget one,
-   a revenue-share pitch, a lowball-with-pressure one, and a
-   misrepresentation attempt, and a pytest file that proves the
-   guardrail catches the last one without needing an API key."
+## Task 3 — A verdict the program can act on
 
-Follow-up prompts during review, the kind you should expect to send
-yourself: "why does OpenAIChatCompletionsModel need an explicit client
-instead of just a model string here?", "walk me through what happens if
-stated_budget_usd is None but the client clearly wants a full site built",
-"show me the diff, I want to read it before running it."
+- "Replace the output type with LeadTriage: intent (short string), budget_pkr
+  (int or absent), red_flags (list of strings), priority (high/medium/low),
+  suggested_reply (string). Set it as output_type so the shape comes back
+  reliably."
+- "Add save_lead in data_store.py that appends a triage record to saved.json.
+  Keep the save decision in Python — should_save() returns priority == 'high'.
+  In the CLI, print a one-line banner with priority and budget, then save only
+  when should_save is true. The model must not call save_lead itself."
+
+## Task 4 — Refusing before you pay
+
+- "Turn the misrepresentation check into a proper SDK @input_guardrail that
+  makes no model call and trips the tripwire on 'pretend you have 10 years',
+  'don't mention you're new', 'fake a portfolio' style messages. Catch
+  InputGuardrailTripwireTriggered in the CLI and print a polite decline, exit
+  cleanly. Keep the regex function pure so it's unit-testable without a key."
+
+## Task 5 — Bonus B, conditional tools
+
+- "Add send_proposal(client_message, proposed_rate_pkr) gated with
+  is_enabled reading ctx.context.verified, so it's only offered when verified
+  is True. Add a --conditional-tools command that resolves get_all_tools for
+  an unverified and a verified profile and prints both tool lists as proof the
+  model never sees send_proposal in the unverified case."
+
+---
+
+## Review / follow-up prompts (the kind worth sending yourself)
+
+- "Why does OpenAIChatCompletionsModel need an explicit client instead of a
+  bare model string here?"
+- "gemini-2.5-flash returns a 404 saying it's no longer available — what does
+  that mean and what should I use instead?"
+- "Show me the diff before running it — I want to read every line."
+- "Walk me through what happens when budget_pkr is null but the client clearly
+  wants a full build."
