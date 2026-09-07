@@ -2,7 +2,7 @@
 The Lead Desk agent: one Agent, two lookup tools, one input guardrail, and
 one typed output shape (LeadTriage).
 
-It runs on Gemini's gemini-2.5-flash through Google's OpenAI-compatible
+It runs on Gemini (gemini-3.6-flash) through Google's OpenAI-compatible
 endpoint, which is why we build an AsyncOpenAI client pointed at Google and
 wrap it in OpenAIChatCompletionsModel rather than passing a bare model name.
 """
